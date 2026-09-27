@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.rockorager.dev/vaxis"
 )
@@ -18,6 +19,7 @@ type Config struct {
 	// Keybindings maps action names to lists of key strings in vaxis
 	// MatchString format (e.g. "ctrl+d", "shift+j", "Page_Down").
 	// A non-empty list replaces the defaults for that action.
+	// Explicit bindings take precedence over defaults in the same view.
 	Keybindings map[string][]string `json:"keybindings,omitempty"`
 	// Theme sets the color theme by name.
 	Theme string `json:"theme,omitempty"`
@@ -72,6 +74,8 @@ var defaultKeybindings = map[string][]string{
 	"cursor_right":   {"l", "Right"},
 	"half_page_down": {"ctrl+d", "Page_Down"},
 	"half_page_up":   {"ctrl+u", "Page_Up"},
+	"full_page_down": {"ctrl+f"},
+	"full_page_up":   {"ctrl+b"},
 	"cursor_bottom":  {"G", "End"},
 	"next_commit":    {"J"},
 	"prev_commit":    {"K"},
@@ -88,26 +92,34 @@ var defaultKeybindings = map[string][]string{
 
 // Bindings resolves key events to named actions.
 type Bindings struct {
-	actions map[string][]string
+	overrides map[string][]string
 }
 
 func newBindings(overrides map[string][]string) Bindings {
-	actions := make(map[string][]string, len(defaultKeybindings))
-	for action, keys := range defaultKeybindings {
-		actions[action] = keys
-	}
+	actions := make(map[string][]string, len(overrides))
 	for action, keys := range overrides {
 		if len(keys) > 0 {
 			actions[action] = keys
 		}
 	}
-	return Bindings{actions: actions}
+	return Bindings{overrides: actions}
 }
 
 // Matches reports whether key matches any configured key string for action.
 func (b Bindings) Matches(key vaxis.Key, action string) bool {
-	keys := b.actions[action]
-	if keys == nil {
+	keys := b.overrides[action]
+	if len(keys) == 0 {
+		// Finder and diff navigation are independent binding scopes.
+		for other, bindings := range b.overrides {
+			if defaultKeybindings[other] == nil || strings.HasPrefix(other, "fuzzy_") != strings.HasPrefix(action, "fuzzy_") {
+				continue
+			}
+			for _, binding := range bindings {
+				if key.MatchString(binding) {
+					return false
+				}
+			}
+		}
 		keys = defaultKeybindings[action]
 	}
 	for _, s := range keys {
